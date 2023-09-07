@@ -14,7 +14,7 @@ Replace `EMAIL_HOST`
 Replace `EMAIL_PORT`  
 Replace `SENDER_EMAIL`  
 Replace `SENDER_PASSWORD`  
-Import `logo.jpg`  
+Import `logo.jpg` from `logo.md` (no idea why uploading images don't work)  
 Import the `Bookerly.ttf` font  
 🏃 Run yunareada.py in a Docker container
 
