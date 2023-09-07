@@ -1,5 +1,5 @@
 # The Kindler
-Send web articles to Kindle
+Web article to Kindle Telegram bot
 
 ## Features
 Grab (almost) any article or web page
