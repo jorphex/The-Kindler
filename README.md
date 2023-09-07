@@ -2,11 +2,11 @@
 Web article to Kindle Telegram bot
 
 ## Features
-Grab (almost) any article or web page  
-Accepts plain links or Telegram forwarded links  
-Generate epub file and send to Telegram and Kindle  
-Cover generated from article image  
-No other images imcluded in the body  
+🤚 Grab (almost) any article or web page  
+🔗 Accepts plain links or Telegram forwarded links  
+📚 Generate epub file and send to Telegram and Kindle  
+🖼 Cover generated from article image  
+🤷‍♂️ No other images imcluded in the body  
 
 ## Usage
 Replace `BOT_TOKEN`  
