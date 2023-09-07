@@ -14,6 +14,8 @@ Replace `EMAIL_HOST`
 Replace `EMAIL_PORT`  
 Replace `SENDER_EMAIL`  
 Replace `SENDER_PASSWORD`  
+Import `logo.jpg`  
+Import the `Bookerly.ttf` font  
 🏃 Run yunareada.py in a Docker container
 
 ![ffasf](https://github.com/Unknowing9428/The-Kindler/assets/144300469/2bbffad3-de52-45f9-b1c6-5b9e3219e99d)
