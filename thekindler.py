@@ -15,13 +15,64 @@ from telegram.ext import Updater, MessageHandler, CallbackContext, Filters, Comm
 import uuid
 from textwrap import wrap
 import sys
+from queue import Queue
+import threading
+import random
 
 sys.stdout = sys.stderr
-BOT_TOKEN = 'bot_token_here'
-EMAIL_HOST = 'email_host.here.com'
-EMAIL_PORT = 'email_port_here'
-SENDER_EMAIL = 'you_email@here.com'
-SENDER_PASSWORD = 'email_password_here'
+BOT_TOKEN = 'BOT_TOKEN'
+EMAIL_HOST = 'EMAIL_HOST'
+EMAIL_PORT = 'EMAIL_PORT'
+SENDER_EMAIL = 'SENDER_EMAIL'
+SENDER_PASSWORD = 'SENDER_PASSWORD'
+MILESTONES = [5, 10, 50, 100, 200, 300, 500, 1000, 1500, 2000]
+MILESTONE_MESSAGES = {
+    5: "🎉 Whoa, 5 articles! You're on a roll!",
+    10: "🌟 10 articles already? Are you sure you're reading all of these?",
+    50: "🚀 Half-century! 50 ebooks sent!",
+    100: "💯 A century of ebooks!!",
+    200: "🥳 200 articles! Your Kindle must be getting a workout!",
+    300: "🤖 300! Are you sure you're not a bot?",
+    500: "🌌 500 articles! Are you trying to download the whole Internet?",
+    1000: "👑 1000 articles!",
+    1500: "🦄 1500? I didn't think you'd get this far.",
+    2000: "🌍 2000! I can't count more than this!"
+}
+user_count_queue = Queue()
+
+def manage_user_count():
+    while True:
+        task = user_count_queue.get()
+        if task is None:  # Signal to stop the thread
+            break
+        task()  # Execute the task
+        user_count_queue.task_done()
+
+def get_next_user_number():
+    number = [None]  # A mutable object to store the result
+
+    def task():
+        try:
+            with open('user_count.txt', 'r+') as file:
+                number[0] = int(file.read().strip()) + 1
+                file.seek(0)
+                file.write(str(number[0]))
+        except FileNotFoundError:
+            with open('user_count.txt', 'w') as file:
+                file.write('1')
+            number[0] = 1
+
+    user_count_queue.put(task)
+    user_count_queue.join()  # Wait until the task is completed
+
+    return number[0]
+
+def number_to_ordinal(n):
+    if 10 <= n % 100 <= 20:
+        suffix = 'th'
+    else:
+        suffix = {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')
+    return str(n) + suffix
 
 def handle_email_command(update: Update, context: CallbackContext) -> None:
     update.message.reply_text('Please send your new Kindle email address.')
@@ -34,66 +85,82 @@ def handle_email(update: Update, context: CallbackContext) -> None:
     context.user_data['awaiting_email'] = False  # Reset the flag after receiving the email.
 
 def handle_message(update: Update, context: CallbackContext) -> None:
+    if 'first_time' not in context.user_data:
+        user_number = get_next_user_number()
+        update.message.reply_text(f"You're the {number_to_ordinal(user_number)} user!")
+        context.user_data['first_time'] = False
+
     if context.user_data.get('awaiting_email', False):
         handle_email(update, context)
         return
 
     if 'kindle_email' not in context.user_data:
-        welcome_message = ("Hello! I am The Kindler!\nHere, you can send a URL of an article 📰 or blog post 📑 and I'll create an ebook 📚 from it and then send it to your Kindle and this chat. The post's top image will be on the cover and on the first page before the title. No other images are included.\n\nFirst, I need to know your Kindle email address.\nPlease send it to me. 🥰")
+        welcome_message = ("Hello! I am The Kindler!\nHere, you can send URLs of articles 📰 or blog posts 📑 and I'll convert them into ebooks 📚 and then send them to your Kindle and also this chat for backup. If the post has images, the top image will be on the cover and on the first page before the title. No other images are included.\n\nFirst, I need to know your Kindle email address.\nPlease send it to me. 🥰")  # Existing welcome message
         update.message.reply_text(welcome_message)
         context.user_data['awaiting_email'] = True
         return
 
     KINDLE_EMAIL = context.user_data['kindle_email']
-    url = update.message.text
 
-    # Check if the message has entities
-    if update.message.entities:
-        for entity in update.message.entities:
-            if entity.type == "url":
-                url_start = entity.offset
-                url_length = entity.length
-                url = update.message.text[url_start: url_start + url_length]
-            elif entity.type == "text_link":
-                url = entity.url
 
-    if not url or not is_url(url):
-        update.message.reply_text('❕ Please send a valid URL.')
+    # Process single or multiple URLs
+    raw_urls = update.message.text.strip()
+    url_list = re.split(',|\n| ', raw_urls) if not update.message.forward_date else [raw_urls]
+    url_list = [url.strip() for url in url_list if url.strip() and is_url(url)]
+
+    if not url_list:
+        update.message.reply_text('❕ Please send valid URLs.')
         return
 
-    update.message.reply_text('👨‍💻 Processing...')
+    for url in url_list:
+        update.message.reply_text('👨‍💻 Processing... ' + url, disable_web_page_preview=True)
 
-    context.user_data.setdefault('count', 0)  # If 'count' is not already in the dictionary, set it to 0.
-    context.user_data['count'] += 1  # Increment the count each time a URL is received.
+        article_content = get_article_content(url)
+        if not article_content or any(elem is None for elem in article_content[:4]):
+            update.message.reply_text('✖️ Failed to extract content from the webpage.')
+            continue
 
-    article_content = get_article_content(url)
+        title, content, _, domain, _, top_image = article_content
+        cover_path, top_image_path = create_cover(title, domain, top_image)
+        book = epub.EpubBook()
 
-    if not article_content or any(elem is None for elem in article_content[:4]):
-        update.message.reply_text('✖️ Failed to extract content from the webpage.')
-        return
+        epub_path, top_image_path = create_epub(title, content, cover_path, domain, book, top_image) or (None, None)
+        if not epub_path or not os.path.exists(epub_path):
+            update.message.reply_text('😰 Sorry, there was an error creating the ebook.')
+            continue
 
-    title, content, _, domain, _, top_image = article_content
+        sent_epub_path = send_to_kindle(epub_path, KINDLE_EMAIL)
 
-    cover_path, top_image_path = create_cover(title, domain, top_image)
-    book = epub.EpubBook()
+        if sent_epub_path and os.path.exists(sent_epub_path):
+            update.message.reply_text('✅ Ebook has been sent to your Kindle!')
+            with open(sent_epub_path, 'rb') as f:
+                telegram_file = InputFile(f)
+                update.message.reply_document(telegram_file)
 
-    epub_path, top_image_path = create_epub(title, content, cover_path, domain, book, top_image) or (None, None)
-    if not epub_path or not os.path.exists(epub_path):
-        update.message.reply_text('😰 Sorry, there was an error creating the ebook.')
-        return
+    # Update ebook count and check for milestones
+    context.user_data.setdefault('ebook_count', 0)
+    context.user_data['ebook_count'] += len(url_list)
+    user_count = context.user_data['ebook_count']
 
-    sent_epub_path = send_to_kindle(epub_path, KINDLE_EMAIL)
+    for milestone in MILESTONES:
+        if user_count >= milestone and user_count - len(url_list) < milestone:
+            milestone_message = MILESTONE_MESSAGES.get(milestone, "")
+            update.message.reply_text(milestone_message)
+            break  # Only show the first relevant milestone message
 
-    if sent_epub_path and os.path.exists(sent_epub_path):
-        update.message.reply_text('✅ Ebook has been sent to your Kindle!')
-        with open(sent_epub_path, 'rb') as f:
-            telegram_file = InputFile(f)
-            update.message.reply_document(telegram_file)
-        if context.user_data['count'] % 5 == 0 and update.message.chat_id != 1596136034: # If 'count' is a multiple of 5, send the donation message.
-            update.message.reply_text('_Love the convenience of turning articles into Kindle ebooks?_\n_Help keep it going to enhance your reading experience! 📚_\n_Send a tip to_ ```0xaeAe4F2b0a2958e2dCC58b7F5494984B8e375369```\n_Your support is greatly appreciated!_ ☺️✨', parse_mode='Markdown')
-    else:
-        update.message.reply_text('Sorry, there was a problem preparing the book to send to your Kindle.')
+    # Random donation message logic
+    if 'next_donation_message_count' not in context.user_data:
+        # Set a random number for the next donation message if it's not already set
+        context.user_data['next_donation_message_count'] = user_count + random.randint(8, 15)
 
+    # Check if the ebook count has reached the random threshold
+    if user_count >= context.user_data['next_donation_message_count']:
+        # and update.message.chat_id != 1596136034:
+        update.message.reply_text('_Love the convenience of turning articles into Kindle ebooks?_\n_Help keep it going to enhance your reading experience! 📚_\n_Send a tip to_ ```0xaeAe4F2b0a2958e2dCC58b7F5494984B8e375369```\n_Your support is greatly appreciated!_ ☺️✨', parse_mode='Markdown')
+        # Reset for the next donation message
+        context.user_data['next_donation_message_count'] = user_count + random.randint(8, 15)
+
+    # Cleanup
     clean_up(cover_path, epub_path, top_image_path)
 
 def is_url(url):
@@ -250,6 +317,10 @@ def create_cover(title, domain, top_image_url=None):
     return cover_path, top_image_path
 
 def get_image(url, filename):
+    if url.startswith('data:image'):
+        # Handle or skip data URIs. For example, you can skip downloading.
+        return None
+
     try:
         response = requests.get(url, timeout=5)  # Set a timeout for the request
         response.raise_for_status()  # Raise an exception if the response contains an HTTP error status code
@@ -288,19 +359,20 @@ def create_epub(title, content, cover_path, domain, book, top_image):
         chap1 = epub.EpubHtml(title='Chapter 1', file_name='chap_01.xhtml', lang='en')
 
         # Add title at the top of the content with a horizontal line separator
-        # If there is a top image, include it
-        if top_image:
-            image_filename = "topimage.jpg"  # Specific filename for the top image
-            image_file_path = get_image(top_image, image_filename)
-            if image_file_path:
-                with open(image_file_path, 'rb') as image_file:
+        # Include the top image if it's a valid URL and not a data URI
+        if top_image and not top_image.startswith('data:image'):
+            image_filename = "topimage.jpg"
+            top_image_path = get_image(top_image, image_filename)  # Store the downloaded image path
+            if top_image_path:
+                with open(top_image_path, 'rb') as image_file:
                     image_content = image_file.read()
                 image_item = epub.EpubImage()
                 image_item.file_name = image_filename
                 image_item.content = image_content
                 book.add_item(image_item)
-                chap1.content = f'<img src="{image_filename}" alt="top_image"/><hr style="border-width:2px;" /><h1>{title}</h1>{content}'
-                top_image_path = image_file_path
+                chap1.content = f'<img src="{image_filename}" alt="top_image"/><hr/><h1>{title}</h1>{content}'
+            else:
+                chap1.content = f'<hr style="border-width:2px;" /><h1>{title}</h1>{content}'
         else:
             chap1.content = f'<hr style="border-width:2px;" /><h1>{title}</h1>{content}'
 
@@ -362,12 +434,16 @@ def send_to_kindle(file_path, kindle_email):
 
 def main() -> None:
     print("Bot started.")
+    user_count_thread = threading.Thread(target=manage_user_count, daemon=True)
+    user_count_thread.start()
     updater = Updater(token=BOT_TOKEN)
     dispatcher = updater.dispatcher
     dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
     dispatcher.add_handler(CommandHandler('email', handle_email_command))
     updater.start_polling()
     updater.idle()
+    user_count_queue.put(None)
+    user_count_thread.join()
 
 if __name__ == '__main__':
     main()
