@@ -1,0 +1,9 @@
+python-telegram-bot==20.8
+requests==2.32.5
+ebooklib==0.20
+Pillow==12.1.0
+newspaper3k==0.2.8
+# textwrap3 is removed, standard textwrap will be used
+lxml-html-clean==0.4.3
+python-dotenv==1.2.1
+trafilatura==2.0.0

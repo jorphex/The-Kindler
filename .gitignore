@@ -1,0 +1,10 @@
+.env
+.env.*
+bot_persistence.pkl
+*.epub
+__pycache__/
+*.pyc
+.venv/
+.DS_Store
+*.log
+*.bak
